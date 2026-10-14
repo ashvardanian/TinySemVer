@@ -290,3 +290,9 @@
 - Docs: Show the uvx and uv-tool one-liners beside pip (48c96a0)
 - Fix: Bump every match of an update-version-in pattern, not just the first (4dce942)
 - Make: Stop unprotecting reviews in the post-release rebase (0c59782)
+
+## October 14, 2026: v3.1.0
+
+### Minor
+
+- Add: Release candidates through a hand-set `X.Y.Z-rc.N` version (dff5da5)
