@@ -148,6 +148,14 @@ If you need to update the version in multiple files, pass a multiline string wit
           CITATION.cff:version: "(.*)"
 ```
 
+### Release Candidates
+
+TinySemVer never invents pre-release versions, but it respects a `-rc.N` one set by hand to let people opt into a project before its API is stable.
+Other pre-release and build suffixes are rejected.
+While the version file holds something like `3.0.0-rc.1`, the next release is exactly `3.0.0`, whatever the commit verbs say, and the changelog lists every commit since the last final tag.
+Pre-release tags are never used as the base, and the `-rc.1` suffix is stripped from every `update-version-in` file, so the usual `(\d+\.\d+\.\d+)` patterns keep working.
+A release candidate that isn't above the last final tag stops the release.
+
 For examples, consider checking StringZilla, USearch, and other libraries using TinySemVer.
 
 Since version 3.0.0, TinySemVer can optionally maintain moving version tags similar to `actions/checkout@v4`:
@@ -245,7 +253,6 @@ SUM:                            13            227            107           1124
 ## What's Missing?
 
 - Optional commit scopes, like `feat(scope): add new feature`. Doesn't make sense for most projects.
-- Pre-release versions, like `1.2.3-alpha.1`. Not needed for most projects.
 - GenAI.
 
 > For reference, according to SemVer 2.0, all [following versions](https://regex101.com/r/Ly7O1x/3/) are valid: `1.1.2-prerelease+meta`, `1.1.2+meta`, `1.1.2+meta-valid`, `1.0.0-alpha`, `1.0.0-beta`, `1.0.0-alpha.beta.1`, `1.0.0-alpha.1`, `1.0.0-alpha0.valid`, `1.0.0-alpha.0valid`, `1.0.0-alpha-a.b-c-somethinglong+build.1-aef.1-its-okay`, `1.0.0-rc.1+build.1`, `2.0.0-rc.1+build.123`, `1.2.3-beta`, `10.2.3-DEV-SNAPSHOT`, `1.2.3-SNAPSHOT-123`, `2.0.0+build.1848`, `2.0.1-alpha.1227`, `1.0.0-alpha+beta`, `1.2.3----RC-SNAPSHOT.12.9.1--.12+788`, `1.2.3----R-S.12.9.1--.12+meta`, `1.2.3----RC-SNAPSHOT.12.9.1--.12`, `1.0.0+0.build.1-rc.10000aaa-kk-0.1`, `1.0.0-0A.is.legal`.

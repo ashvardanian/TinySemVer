@@ -38,7 +38,9 @@ jobs:
           push: "true"
           changelog-file: "CHANGELOG.md"
           version-file: "VERSION"
-          update-version-in: 'pyproject.toml:version = "(.*)"'
+          update-version-in: |
+            pyproject.toml:version = "(.*)"
+            tinysemver/__init__.py:__version__ = "(.*)"
           github-token: ${{ secrets.TINYSEMVER_TOKEN }}
           create-release: "true"
           push-moving-tags: "true"

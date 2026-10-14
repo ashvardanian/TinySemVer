@@ -16,60 +16,44 @@ Example:
 """
 
 from tinysemver.tinysemver import (
-    # Main function
+    BumpType,
+    ChangeDiff,
+    Commit,
+    NoNewCommitsError,
+    PathLike,
+    SemVer,
     bump,
-    # Version utilities
-    parse_version,
     bump_version,
-    # Commit utilities
     commit_starts_with_verb,
-    normalize_verbs,
-    group_commits,
     convert_commits_to_message,
-    # Git utilities
-    get_last_tag,
+    create_tag,
     get_commits_since_tag,
     get_diff_for_commit,
-    # File utilities
+    get_last_tag,
+    group_commits,
+    normalize_verbs,
+    parse_version,
     patch_with_regex,
-    # Tag creation
-    create_tag,
-    # Types
-    SemVer,
-    BumpType,
-    PathLike,
-    Commit,
-    ChangeDiff,
-    # Exceptions
-    NoNewCommitsError,
 )
 
-__version__ = "2.1.1"
+__version__ = "3.0.3"
 __all__ = [
-    # Main function
+    "BumpType",
+    "ChangeDiff",
+    "Commit",
+    "NoNewCommitsError",
+    "PathLike",
+    "SemVer",
     "bump",
-    # Version utilities
-    "parse_version",
     "bump_version",
-    # Commit utilities
     "commit_starts_with_verb",
-    "normalize_verbs",
-    "group_commits",
     "convert_commits_to_message",
-    # Git utilities
-    "get_last_tag",
+    "create_tag",
     "get_commits_since_tag",
     "get_diff_for_commit",
-    # File utilities
+    "get_last_tag",
+    "group_commits",
+    "normalize_verbs",
+    "parse_version",
     "patch_with_regex",
-    # Tag creation
-    "create_tag",
-    # Types
-    "SemVer",
-    "BumpType",
-    "PathLike",
-    "Commit",
-    "ChangeDiff",
-    # Exceptions
-    "NoNewCommitsError",
 ]

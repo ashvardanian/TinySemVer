@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """TinySemVer is a tiny minimalistic Semantic Versioning tool.
 
 This module traces the commit history of a Git repository after the last tag, and based 
@@ -46,52 +45,58 @@ Setting up a new project:
 
 """
 import argparse
-import subprocess
-import re
 import os
-from typing import List, Tuple, Literal, Union, Optional, NamedTuple
-from datetime import datetime
+import re
+import subprocess
+import sys
 import traceback
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Any, Literal, NamedTuple
 
-
-SemVer = Tuple[int, int, int]
 BumpType = Literal["major", "minor", "patch"]
-PathLike = Union[str, os.PathLike]
-Commit = NamedTuple("Commit", [("hash", str), ("message", str)])
+PathLike = str | os.PathLike[str]
 ChangeDiff = str
+
+
+class SemVer(NamedTuple):
+    major: int
+    minor: int
+    patch: int
+
+    def __str__(self) -> str:
+        return f"{self.major}.{self.minor}.{self.patch}"
+
+
+class Commit(NamedTuple):
+    hash: str
+    message: str
 
 
 class NoNewCommitsError(Exception):
     """Raised when no new commits are found since the last tag."""
 
-    pass
 
 
 
 
-_console = None  # Initialize global console variable
-_console_is_rich = True  # Initialize global console type variable
+try:
+    from rich.console import Console
+
+    _console: Any = Console()
+except ImportError:
+    _console = None
 
 
 def print_to_console(message: str) -> None:
-    """Print a message to the console."""
-    global _console, _console_is_rich
-    if _console == None and _console_is_rich:
-        try:
-            from rich import Console
-
-            _console = Console()
-        except ImportError:
-            _console = None
-            _console_is_rich = False
-
-    if _console_is_rich:
+    """Print a message to the console, rendering `rich` markup when it's installed."""
+    if _console:
         _console.print(message)
     else:
         print(message)
 
 
-def get_last_tag(repository_path: PathLike) -> str:
+def get_last_tag(repository_path: PathLike) -> str | None:
     """Retrieve the last full-version Git tag name from the repository.
 
     Only three-component tags count: the moving `v3` and `v3.0` aliases that `push_moving_tags`
@@ -107,40 +112,44 @@ def get_last_tag(repository_path: PathLike) -> str:
             "v[0-9]*.[0-9]*.[0-9]*",
             "--match",
             "[0-9]*.[0-9]*.[0-9]*",
+            "--exclude",
+            "*-*",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         cwd=repository_path,
+        check=False,
     )
     if result.returncode != 0:
         return None
     return result.stdout.strip().decode("utf-8")
 
 
-def get_commits_since_tag(repository_path: PathLike, tag: str) -> List[Commit]:
-    """Get commit hashes and messages since the specified Git tag."""
+def get_commits_since_tag(repository_path: PathLike, tag: str | None) -> list[Commit]:
+    """Get commit hashes and messages since the specified Git tag, or the whole history without one."""
     result = subprocess.run(
-        ["git", "log", f"{tag}..HEAD", "--no-merges", "--pretty=format:%h:%s"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        ["git", "log", f"{tag}..HEAD" if tag else "HEAD", "--no-merges", "--pretty=format:%h:%s"],
+        capture_output=True,
         cwd=repository_path,
+        check=False,
     )
     if result.returncode != 0:
-        return [], []
+        raise RuntimeError(f"Failed to list commits since '{tag}': {result.stderr.decode('utf-8').strip()}")
 
-    lines = result.stdout.strip().decode("utf-8").split("\n")
-    hashes = [line.partition(":")[0] for line in lines if line.strip()]
-    messages = [line.partition(":")[2] for line in lines if line.strip()]
-    return [Commit(h, m) for h, m in zip(hashes, messages)]
+    commits = []
+    for line in result.stdout.decode("utf-8").splitlines():
+        commit_hash, _, message = line.partition(":")
+        if line.strip():
+            commits.append(Commit(commit_hash, message))
+    return commits
 
 
 def get_diff_for_commit(repository_path: PathLike, commit_hash: str) -> ChangeDiff:
     """Retrieve the diff for a specific commit and parse into Change named tuples."""
     result = subprocess.run(
         ["git", "diff", f"{commit_hash}^", commit_hash, "--unified=3"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         cwd=repository_path,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to retrieve diff for commit: {commit_hash}")
@@ -148,23 +157,22 @@ def get_diff_for_commit(repository_path: PathLike, commit_hash: str) -> ChangeDi
     return result.stdout.decode("utf-8")
 
 
-def parse_version(tag: str) -> SemVer:
-    """Parse a version string from a Git tag name, assuming it looks like `v1.2.3`."""
-    match = re.match(r"v?(\d+)\.(\d+)\.(\d+)", tag)
+def parse_version(tag: str) -> tuple[SemVer, str]:
+    """Parse `[v]MAJOR.MINOR.PATCH[-rc.N]` into its core and its verbatim `-rc.N` suffix."""
+    match = re.fullmatch(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-rc\.(?:0|[1-9]\d*))?", tag.strip())
     if not match:
-        raise ValueError(f"Tag {tag} is not in a recognized version format")
-    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+        raise ValueError(f"Version '{tag}' is not in the MAJOR.MINOR.PATCH[-rc.N] format")
+    return SemVer(int(match.group(1)), int(match.group(2)), int(match.group(3))), match.group(4) or ""
 
 
 def commit_starts_with_verb(commit: str, verb: str) -> bool:
     """Check if a commit message starts with a specific verb, ignoring capitalization and punctuation marks."""
-    if commit.lower().startswith(verb):
-        if len(commit) == len(verb) or commit[len(verb)].isspace() or commit[len(verb)] == ":":
-            return True
-    return False
+    if not commit.lower().startswith(verb):
+        return False
+    return len(commit) == len(verb) or commit[len(verb)].isspace() or commit[len(verb)] == ":"
 
 
-def normalize_verbs(verbs: Union[str, List[str]], defaults: List[str]) -> List[str]:
+def normalize_verbs(verbs: str | list[str] | None, defaults: list[str]) -> list[str]:
     """Normalize a list of verbs, allowing string input to be split by commas."""
     if isinstance(verbs, str):
         return [verb.strip("\"'") for verb in verbs.split(",")]
@@ -175,15 +183,15 @@ def normalize_verbs(verbs: Union[str, List[str]], defaults: List[str]) -> List[s
 
 
 def group_commits(
-    commits: List[Commit],
-    major_verbs: List[str],
-    minor_verbs: List[str],
-    patch_verbs: List[str],
-) -> Tuple[List[Commit], List[Commit], List[Commit]]:
+    commits: list[Commit],
+    major_verbs: list[str],
+    minor_verbs: list[str],
+    patch_verbs: list[str],
+) -> tuple[list[Commit], list[Commit], list[Commit]]:
     """Group commits into major, minor, and patch categories based on keywords to simplify future `BumpType` resolution."""
-    major_commits = []
-    minor_commits = []
-    patch_commits = []
+    major_commits: list[Commit] = []
+    minor_commits: list[Commit] = []
+    patch_commits: list[Commit] = []
 
     for commit in commits:
         if any(commit_starts_with_verb(commit.message, verb) for verb in major_verbs):
@@ -197,19 +205,19 @@ def group_commits(
 
 
 def convert_commits_to_message(
-    major_commits: List[Commit],
-    minor_commits: List[Commit],
-    patch_commits: List[Commit],
+    major_commits: list[Commit],
+    minor_commits: list[Commit],
+    patch_commits: list[Commit],
 ) -> str:
     """Turns the different commits (major, minor, patch) into a single message."""
     message = ""
 
     if len(major_commits):
-        message += f"\n### Major\n\n" + "\n".join(f"- {c.message} ({c.hash})" for c in major_commits) + "\n"
+        message += "\n### Major\n\n" + "\n".join(f"- {c.message} ({c.hash})" for c in major_commits) + "\n"
     if len(minor_commits):
-        message += f"\n### Minor\n\n" + "\n".join(f"- {c.message} ({c.hash})" for c in minor_commits) + "\n"
+        message += "\n### Minor\n\n" + "\n".join(f"- {c.message} ({c.hash})" for c in minor_commits) + "\n"
     if len(patch_commits):
-        message += f"\n### Patch\n\n" + "\n".join(f"- {c.message} ({c.hash})" for c in patch_commits) + "\n"
+        message += "\n### Patch\n\n" + "\n".join(f"- {c.message} ({c.hash})" for c in patch_commits) + "\n"
 
     return message
 
@@ -218,11 +226,10 @@ def bump_version(version: SemVer, bump_type: BumpType) -> SemVer:
     """Bump the version based on the specified bump type (major, minor, patch)."""
     major, minor, patch = version
     if bump_type == "major":
-        return major + 1, 0, 0
-    elif bump_type == "minor":
-        return major, minor + 1, 0
-    elif bump_type == "patch":
-        return major, minor, patch + 1
+        return SemVer(major + 1, 0, 0)
+    if bump_type == "minor":
+        return SemVer(major, minor + 1, 0)
+    return SemVer(major, minor, patch + 1)
 
 
 def create_tag(
@@ -232,18 +239,18 @@ def create_tag(
     user_name: str,
     user_email: str,
     default_branch: str = "main",
-    github_token: Optional[str] = None,
-    github_repository: Optional[str] = None,
+    github_token: str | None = None,
+    github_repository: str | None = None,
     push: bool = False,
     create_release: bool = False,
     push_moving_tags: bool = False,
-    major_commits: List[Commit] = None,
-    minor_commits: List[Commit] = None,
-    patch_commits: List[Commit] = None,
+    major_commits: list[Commit] | None = None,
+    minor_commits: list[Commit] | None = None,
+    patch_commits: list[Commit] | None = None,
 ) -> None:
     """Create a new Git tag and optionally push it to a remote GitHub repository."""
 
-    tag = f"v{version[0]}.{version[1]}.{version[2]}"
+    tag = f"v{version}"
     env = os.environ.copy()
     env["GIT_COMMITTER_NAME"] = user_name
     env["GIT_COMMITTER_EMAIL"] = user_email
@@ -255,8 +262,9 @@ def create_tag(
     message = f"Release: {tag} [skip ci]"
     message += convert_commits_to_message(major_commits or [], minor_commits or [], patch_commits or [])
 
-    subprocess.run(["git", "add", "-A"], cwd=repository_path)
-    subprocess.run(["git", "commit", "-m", message], cwd=repository_path, env=env)
+    # `-u` keeps untracked build outputs out of the release commit
+    subprocess.run(["git", "add", "-u"], cwd=repository_path, check=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=repository_path, env=env, check=True)
 
     # Get the SHA of the new commit
     new_commit_sha = subprocess.run(
@@ -267,21 +275,22 @@ def create_tag(
         check=True,
     ).stdout.strip()
 
-    subprocess.run(["git", "tag", "-a", tag, "-m", message, new_commit_sha], cwd=repository_path, env=env)
+    subprocess.run(["git", "tag", "-a", tag, "-m", message, new_commit_sha], cwd=repository_path, env=env, check=True)
     print_to_console(f"[bold green]Created new tag:[/bold green] {tag}")
 
     # Optionally create moving major and minor version tags for GitHub Actions compatibility
     # This allows users to reference @v2 or @v2.1 instead of @v2.1.1
     # Note: This requires force-push permissions
     if push_moving_tags:
-        major_tag = f"v{version[0]}"
-        minor_tag = f"v{version[0]}.{version[1]}"
+        major_tag = f"v{version.major}"
+        minor_tag = f"v{version.major}.{version.minor}"
 
         # Force-update major version tag (e.g., v2 -> v2.1.1)
         subprocess.run(
             ["git", "tag", "-fa", major_tag, "-m", f"Update {major_tag} to {tag}", new_commit_sha],
             cwd=repository_path,
             env=env,
+            check=True,
         )
         print_to_console(f"[bold green]Updated major version tag:[/bold green] {major_tag} -> {tag}")
 
@@ -290,6 +299,7 @@ def create_tag(
             ["git", "tag", "-fa", minor_tag, "-m", f"Update {minor_tag} to {tag}", new_commit_sha],
             cwd=repository_path,
             env=env,
+            check=True,
         )
         print_to_console(f"[bold green]Updated minor version tag:[/bold green] {minor_tag} -> {tag}")
     if push:
@@ -308,6 +318,7 @@ def create_tag(
             cwd=repository_path,
             capture_output=True,
             env=env,
+            check=False,
         )
         if push_result.returncode != 0:
             raise RuntimeError(
@@ -315,7 +326,9 @@ def create_tag(
             )
 
         # Push the specific version tag (e.g., v2.1.1)
-        push_result = subprocess.run(["git", "push", url, tag], cwd=repository_path, capture_output=True, env=env)
+        push_result = subprocess.run(
+            ["git", "push", url, tag], cwd=repository_path, capture_output=True, env=env, check=False
+        )
         if push_result.returncode != 0:
             raise RuntimeError(
                 f"Failed to push the tag '{tag}' to the remote repository: '{url}' with error: {push_result.stderr.decode('utf-8')}"
@@ -327,9 +340,13 @@ def create_tag(
         # commit and the exact tag are already on the remote, so the release is complete and cannot
         # be retried - a token without force-push rights must cost the aliases, never the release.
         if push_moving_tags:
-            for moving_tag in (f"v{version[0]}", f"v{version[0]}.{version[1]}"):
+            for moving_tag in (f"v{version.major}", f"v{version.major}.{version.minor}"):
                 push_result = subprocess.run(
-                    ["git", "push", url, moving_tag, "--force"], cwd=repository_path, capture_output=True, env=env
+                    ["git", "push", url, moving_tag, "--force"],
+                    cwd=repository_path,
+                    capture_output=True,
+                    env=env,
+                    check=False,
                 )
                 if push_result.returncode != 0:
                     print_to_console(
@@ -339,52 +356,28 @@ def create_tag(
                 else:
                     print_to_console(f"[bold green]Pushed moving tag:[/bold green] {moving_tag} -> {tag}")
 
-        # Create a release using GitHub CLI if available
         if create_release and github_repository:
-            try:
-                # Check if GitHub CLI is available
-                subprocess.run(["gh", "--version"], check=True, capture_output=True)
-
-                # Create the release
-                release_command = [
-                    "gh",
-                    "release",
-                    "create",
-                    tag,
-                    "--title",
-                    f"Release {tag}",
-                    "--notes",
-                    message,
-                    "--repo",
-                    github_repository,
-                ]
-
-                if github_token:
-                    env["GITHUB_TOKEN"] = github_token
-
-                release_result = subprocess.run(
-                    release_command, cwd=repository_path, capture_output=True, text=True, env=env
-                )
-
-                if release_result.returncode == 0:
-                    print_to_console(f"[bold green]Created GitHub release for tag:[/bold green] {tag}")
-                else:
-                    print_to_console(
-                        f"[bold red]Failed to create GitHub release:[/bold red] {release_result.stderr.strip()}"
-                    )
-            except subprocess.CalledProcessError:
-                print_to_console("[bold yellow]GitHub CLI not available. Skipping release creation.[/bold yellow]")
-            except Exception as e:
-                print_to_console(f"[bold red]An error occurred while creating the release:[/bold red] {str(e)}")
+            release_result = subprocess.run(
+                ["gh", "release", "create", tag, "--title", f"Release {tag}", "--notes", message],
+                cwd=repository_path,
+                capture_output=True,
+                text=True,
+                env={**env, "GH_REPO": github_repository},
+                check=False,
+            )
+            if release_result.returncode != 0:
+                raise RuntimeError(f"Failed to create the GitHub release for '{tag}': {release_result.stderr.strip()}")
+            print_to_console(f"[bold green]Created GitHub release for tag:[/bold green] {tag}")
 
 
 def patch_with_regex(
-    file_path: str,
+    file_path: PathLike,
     regex_pattern: str,
     new_version: str,
     dry_run: bool = False,
     verbose: bool = False,
     count: int = 1,
+    stale_version: str = "",
 ) -> None:
     """Update a file by replacing the first capturing group of its matches with a new version.
 
@@ -392,13 +385,18 @@ def patch_with_regex(
     rewrites only the first - which suits a single-line version file and a catch-all `(.*)` pattern
     whose empty-string matches would otherwise duplicate the version - while `0` rewrites every match,
     what a README that lists the dependency more than once needs so no example pins a stale version.
+    A `stale_version` like `3.0.0-rc.1` is first cut down to its core `3.0.0`, so the usual
+    `(\\d+\\.\\d+\\.\\d+)` patterns still match the pre-release they graduate.
     """
 
     assert os.path.exists(file_path), f"File missing: {file_path}"
     with open(file_path, "r") as file:
         old_content = file.read()
+    stale_core, _, _ = stale_version.partition("-")
+    if stale_version:
+        old_content = old_content.replace(stale_version, stale_core)
 
-    def replace_first_group(match):
+    def replace_first_group(match: re.Match[str]) -> str:
         assert len(match.groups()) == 1, f"Must contain exactly one capturing group in: {regex_pattern} for {file_path}"
         range_to_replace = match.span(1)
         old_slice = match.span(0)
@@ -410,10 +408,9 @@ def patch_with_regex(
         )
         return updated
 
-    # Compile the regex pattern with multiline support
-    regex_pattern = re.compile(regex_pattern, re.MULTILINE)
-    matches = list(re.finditer(regex_pattern, old_content))
-    new_content = re.sub(regex_pattern, replace_first_group, old_content, count=count)
+    compiled_pattern = re.compile(regex_pattern, re.MULTILINE)
+    matches = list(compiled_pattern.finditer(old_content))
+    new_content = compiled_pattern.sub(replace_first_group, old_content, count=count)
 
     non_empty_matches = [m for m in matches if len(m.group(0).strip())]
     assert len(non_empty_matches) > 0, f"No matches found in: {file_path}"
@@ -421,11 +418,12 @@ def patch_with_regex(
     for match in non_empty_matches:
         match_line = old_content.count("\n", 0, match.start()) + 1
         old_slice = match.group(0)
-        new_slice = re.sub(regex_pattern, replace_first_group, old_slice, count=1)
+        new_slice = compiled_pattern.sub(replace_first_group, old_slice, count=1)
 
         if verbose:
             print_to_console(f"[bold cyan]Will update file:[/bold cyan] {file_path}:{match_line}")
-            print_to_console(f"[red]- {old_slice}[/red]")
+            shown_slice = old_slice.replace(stale_core, stale_version) if stale_version else old_slice
+            print_to_console(f"[red]- {shown_slice}[/red]")
             print_to_console(f"[green]+ {new_slice}[/green]")
 
     if not dry_run:
@@ -439,21 +437,21 @@ def bump(
     *,  # enforce keyword-only arguments
     dry_run: bool = False,
     verbose: bool = False,
-    major_verbs: List[str] = ["major", "breaking", "break"],
-    minor_verbs: List[str] = ["minor", "feature", "feat", "add", "new"],
-    patch_verbs: List[str] = ["patch", "fix", "bug", "improve", "docs", "make"],
-    path: Optional[PathLike] = None,  # takes current directory as default
-    changelog_file: Optional[PathLike] = None,  # relative or absolute path to the changelog file
-    version_file: Optional[PathLike] = None,  # relative or absolute path to the version file
-    update_version_in: Optional[List[Tuple[PathLike, str]]] = None,  # path + regex pattern pairs
-    update_major_version_in: Optional[List[Tuple[PathLike, str]]] = None,  # path + regex pattern pairs
-    update_minor_version_in: Optional[List[Tuple[PathLike, str]]] = None,  # path + regex pattern pairs
-    update_patch_version_in: Optional[List[Tuple[PathLike, str]]] = None,  # path + regex pattern pairs
+    major_verbs: str | list[str] | None = None,
+    minor_verbs: str | list[str] | None = None,
+    patch_verbs: str | list[str] | None = None,
+    path: PathLike | None = None,  # takes current directory as default
+    changelog_file: PathLike | None = None,  # relative or absolute path to the changelog file
+    version_file: PathLike | None = None,  # relative or absolute path to the version file
+    update_version_in: Sequence[tuple[PathLike, str]] | None = None,  # path + regex pattern pairs
+    update_major_version_in: Sequence[tuple[PathLike, str]] | None = None,  # path + regex pattern pairs
+    update_minor_version_in: Sequence[tuple[PathLike, str]] | None = None,  # path + regex pattern pairs
+    update_patch_version_in: Sequence[tuple[PathLike, str]] | None = None,  # path + regex pattern pairs
     git_user_name: str = "TinySemVer",
     git_user_email: str = "tinysemver@ashvardanian.com",
     push: bool = True,
-    github_token: Optional[str] = None,
-    github_repository: Optional[str] = None,
+    github_token: str | None = None,
+    github_repository: str | None = None,
     default_branch: str = "main",
     create_release: bool = False,
     push_moving_tags: bool = False,
@@ -489,39 +487,24 @@ def bump(
     repository_path = os.path.abspath(path) if path else os.getcwd()
     assert os.path.isdir(os.path.join(repository_path, ".git")), f"Not a Git repository: {repository_path}"
 
-    def normalize_path(file_path) -> str:
-        if not file_path:
-            return None
-        # Convert `pathlib.Path` to `str`
-        file_path_str = str(file_path) if hasattr(file_path, '__fspath__') or isinstance(file_path, os.PathLike) else file_path
-        if not file_path_str or len(file_path_str) == 0:
-            return None
-        if os.path.isabs(file_path_str):
-            return file_path_str
-        return os.path.join(repository_path, file_path_str)
+    def absolute(file_path: PathLike) -> str:
+        return os.path.join(repository_path, os.fspath(file_path))  # an absolute `file_path` wins the join
 
-    changelog_file = normalize_path(changelog_file)
-    version_file = normalize_path(version_file)
-    if update_version_in:
-        update_version_in = [(normalize_path(file), pattern) for file, pattern in update_version_in]
-    if update_major_version_in:
-        update_major_version_in = [(normalize_path(file), pattern) for file, pattern in update_major_version_in]
-    if update_minor_version_in:
-        update_minor_version_in = [(normalize_path(file), pattern) for file, pattern in update_minor_version_in]
-    if update_patch_version_in:
-        update_patch_version_in = [(normalize_path(file), pattern) for file, pattern in update_patch_version_in]
+    changelog_file = absolute(changelog_file) if changelog_file else None
+    version_file = absolute(version_file) if version_file else None
+    update_version_in = [(absolute(file), pattern) for file, pattern in update_version_in or []]
+    update_major_version_in = [(absolute(file), pattern) for file, pattern in update_major_version_in or []]
+    update_minor_version_in = [(absolute(file), pattern) for file, pattern in update_minor_version_in or []]
+    update_patch_version_in = [(absolute(file), pattern) for file, pattern in update_patch_version_in or []]
 
     # Let's pull the environment variables from the GitHub Action context
     # https://cli.github.com/manual/gh_help_environment
     if not dry_run:
-        github_token = github_token or os.getenv("GH_TOKEN", None)
-        assert not github_token or len(github_token) > 0, "GitHub token is empty or missing"
-        github_repository = github_repository or os.getenv("GH_REPOSITORY", None)
-        assert not github_repository or len(github_repository) > 0, "GitHub repository is empty or missing"
+        github_token = github_token or os.getenv("GH_TOKEN")
+        github_repository = github_repository or os.getenv("GH_REPOSITORY")
         if github_repository:
-            matched_repository = re.match(r"[\w-]*\/[\w-]*", github_repository)
-            assert (
-                matched_repository and matched_repository.string == github_repository
+            assert re.fullmatch(
+                r"[\w.-]+/[\w.-]+", github_repository
             ), "GitHub repository must be in the 'owner/repo' format"
 
     assert not version_file or (
@@ -535,38 +518,52 @@ def bump(
     minor_verbs = normalize_verbs(minor_verbs, ["minor", "feature", "feat", "add", "new"])
     patch_verbs = normalize_verbs(patch_verbs, ["patch", "fix", "bug", "improve", "docs", "make"])
 
+    # A pre-release like `3.0.0-rc.1`, set by hand in the version file, names the next release
     last_tag = get_last_tag(repository_path)
-    assert last_tag, f"No tags found in the repository: {repository_path}"
+    planned_text, planned_version, planned_suffix = "", SemVer(0, 0, 0), ""
+    if version_file and os.path.exists(version_file):
+        with open(version_file, "r") as file:
+            planned_text = file.read().strip()
+        planned_version, planned_suffix = parse_version(planned_text)
+    assert last_tag or planned_suffix, f"No tags found in the repository: {repository_path}"
 
-    current_version = parse_version(last_tag)
-    if verbose:
-        print_to_console(f"Current version: {current_version[0]}.{current_version[1]}.{current_version[2]}")
+    current_version = parse_version(last_tag)[0] if last_tag else None
+    if verbose and current_version:
+        print_to_console(f"Current version: {current_version}")
 
     commits = get_commits_since_tag(repository_path, last_tag)
     if not len(commits):
-        raise NoNewCommitsError(f"No new commits since the last {last_tag} tag")
+        raise NoNewCommitsError(f"No new commits since {last_tag or 'the first commit'}")
 
     if verbose:
         print_to_console(f"? Commits since last tag: {len(commits)}")
-        for hash, commit in commits:
-            print_to_console(f"# {hash}: {commit}")
+        for commit_hash, message in commits:
+            print_to_console(f"# {commit_hash}: {message}")
 
     major_commits, minor_commits, patch_commits = group_commits(commits, major_verbs, minor_verbs, patch_verbs)
     assert (
         len(major_commits) + len(minor_commits) + len(patch_commits)
-    ), "No commit categories found to bump the version: " + ", ".join(map(lambda c: c[1], commits))
+    ), "No commit categories found to bump the version: " + ", ".join(commit.message for commit in commits)
 
+    bump_type: BumpType
     if len(major_commits):
         bump_type = "major"
     elif len(minor_commits):
         bump_type = "minor"
     else:
         bump_type = "patch"
-    new_version = bump_version(current_version, bump_type)
+    if planned_suffix:
+        assert (
+            not current_version or planned_version > current_version
+        ), f"Pre-release {planned_version}{planned_suffix} isn't above the last tag {last_tag}"
+        new_version = planned_version
+    else:
+        assert current_version, f"No tags found in the repository: {repository_path}"
+        new_version = bump_version(current_version, bump_type)
     if verbose:
-        print_to_console(f"Next version: {new_version[0]}.{new_version[1]}.{new_version[2]} (type: {bump_type})")
+        print_to_console(f"Next version: {new_version} (type: {bump_type})")
 
-    new_version_str = f"{new_version[0]}.{new_version[1]}.{new_version[2]}"
+    new_version_str = str(new_version)
     if version_file:
         patch_with_regex(version_file, r"(.*)", new_version_str, dry_run=dry_run, verbose=verbose)
 
@@ -590,16 +587,23 @@ def bump(
     # once - and every one must move, unlike the single-line version file patched above.
     if update_version_in:
         for file_path, regex_pattern in update_version_in:
-            patch_with_regex(file_path, regex_pattern, new_version_str, dry_run=dry_run, verbose=verbose, count=0)
-    if bump_type in ["major"] and update_major_version_in:
+            patch_with_regex(
+                file_path,
+                regex_pattern,
+                new_version_str,
+                dry_run=dry_run,
+                verbose=verbose,
+                count=0,
+                stale_version=planned_text if planned_suffix else "",
+            )
+    if not current_version or new_version.major != current_version.major:
         for file_path, regex_pattern in update_major_version_in:
-            patch_with_regex(file_path, regex_pattern, str(new_version[0]), dry_run=dry_run, verbose=verbose, count=0)
-    if bump_type in ["major", "minor"] and update_minor_version_in:
+            patch_with_regex(file_path, regex_pattern, str(new_version.major), dry_run=dry_run, verbose=verbose, count=0)
+    if not current_version or new_version[:2] != current_version[:2]:
         for file_path, regex_pattern in update_minor_version_in:
-            patch_with_regex(file_path, regex_pattern, str(new_version[1]), dry_run=dry_run, verbose=verbose, count=0)
-    if bump_type in ["major", "minor", "patch"] and update_patch_version_in:
-        for file_path, regex_pattern in update_patch_version_in:
-            patch_with_regex(file_path, regex_pattern, str(new_version[2]), dry_run=dry_run, verbose=verbose, count=0)
+            patch_with_regex(file_path, regex_pattern, str(new_version.minor), dry_run=dry_run, verbose=verbose, count=0)
+    for file_path, regex_pattern in update_patch_version_in:
+        patch_with_regex(file_path, regex_pattern, str(new_version.patch), dry_run=dry_run, verbose=verbose, count=0)
 
     if not dry_run:
         create_tag(
@@ -621,7 +625,7 @@ def bump(
     return new_version
 
 
-def main():
+def main() -> None:
     """
     TinySemVer entrypoint responsible for parsing CLI arguments and environment variables,
     preprocessing them and passing down to the `bump` function.
@@ -736,10 +740,16 @@ def main():
         args = parser.parse_args()
     else:
 
-        class Args:
-            pass
+        def patterns_from_environment(name: str) -> list[tuple[str, str]]:
+            pairs = []
+            for line in os.environ.get(name, "").splitlines():
+                file_path, colon, regex_pattern = line.partition(":")
+                assert not line or colon, f"Expected 'path:regex' in {name}, got: {line}"
+                if line:
+                    pairs.append((file_path, regex_pattern))
+            return pairs
 
-        args = Args()
+        args = argparse.Namespace()
         args.dry_run = os.environ.get("TINYSEMVER_DRY_RUN", "").lower() == "true"
         args.verbose = os.environ.get("TINYSEMVER_VERBOSE", "").lower() == "true"
         args.push = os.environ.get("TINYSEMVER_PUSH", "").lower() == "true"
@@ -749,26 +759,10 @@ def main():
         args.default_branch = os.environ.get("TINYSEMVER_DEFAULT_BRANCH") or "main"
         args.changelog_file = os.environ.get("TINYSEMVER_CHANGELOG_FILE")
         args.version_file = os.environ.get("TINYSEMVER_VERSION_FILE")
-        args.update_version_in = [
-            tuple(item.split(":", 1))
-            for item in os.environ.get("TINYSEMVER_UPDATE_VERSION_IN", "").split("\n")  #
-            if item  #
-        ]
-        args.update_major_version_in = [
-            tuple(item.split(":", 1))
-            for item in os.environ.get("TINYSEMVER_UPDATE_MAJOR_VERSION_IN", "").split("\n")
-            if item
-        ]
-        args.update_minor_version_in = [
-            tuple(item.split(":", 1))
-            for item in os.environ.get("TINYSEMVER_UPDATE_MINOR_VERSION_IN", "").split("\n")
-            if item
-        ]
-        args.update_patch_version_in = [
-            tuple(item.split(":", 1))
-            for item in os.environ.get("TINYSEMVER_UPDATE_PATCH_VERSION_IN", "").split("\n")
-            if item
-        ]
+        args.update_version_in = patterns_from_environment("TINYSEMVER_UPDATE_VERSION_IN")
+        args.update_major_version_in = patterns_from_environment("TINYSEMVER_UPDATE_MAJOR_VERSION_IN")
+        args.update_minor_version_in = patterns_from_environment("TINYSEMVER_UPDATE_MINOR_VERSION_IN")
+        args.update_patch_version_in = patterns_from_environment("TINYSEMVER_UPDATE_PATCH_VERSION_IN")
         args.path = os.environ.get("TINYSEMVER_REPO_PATH")
         args.git_user_name = os.environ.get("TINYSEMVER_GIT_USER_NAME", "TinySemVer")
         args.git_user_email = os.environ.get("TINYSEMVER_GIT_USER_EMAIL", "tinysemver@ashvardanian.com")
@@ -803,19 +797,20 @@ def main():
             git_user_email=args.git_user_email,
             github_token=args.github_token,
             github_repository=args.github_repository,
+            default_branch=args.default_branch or "main",
             push=args.push,
             create_release=args.create_release,
             push_moving_tags=args.push_moving_tags,
         )
     except NoNewCommitsError as e:
         print(f"! {e}")
-        exit(0)
+        sys.exit(0)
     except AssertionError as e:
         print(f"! {e}")
-        exit(1)
-    except Exception as e:
+        sys.exit(1)
+    except Exception:
         traceback.print_exc()
-        exit(1)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

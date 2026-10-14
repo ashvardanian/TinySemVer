@@ -1,36 +1,32 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Comprehensive tests for TinySemVer.
 
 Run with:
     pytest test.py -v
     pytest test.py -v --cov=tinysemver --cov-report=html
 """
-import os
-import re
 import subprocess
 import tempfile
-import shutil
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
+
 import pytest
 
 from tinysemver.tinysemver import (
-    parse_version,
-    bump_version,
-    commit_starts_with_verb,
-    normalize_verbs,
-    group_commits,
-    convert_commits_to_message,
-    patch_with_regex,
-    get_last_tag,
-    get_commits_since_tag,
-    get_diff_for_commit,
     Commit,
     NoNewCommitsError,
     bump,
+    bump_version,
+    commit_starts_with_verb,
+    convert_commits_to_message,
+    get_commits_since_tag,
+    get_diff_for_commit,
+    get_last_tag,
+    group_commits,
+    normalize_verbs,
+    parse_version,
+    patch_with_regex,
 )
-
 
 # region Fixtures
 
@@ -91,16 +87,16 @@ class TestVersionParsing:
     """Tests for version parsing and bumping functions."""
 
     def test_parse_version_with_v_prefix(self):
-        assert parse_version("v1.2.3") == (1, 2, 3)
+        assert parse_version("v1.2.3") == ((1, 2, 3), "")
 
     def test_parse_version_without_v_prefix(self):
-        assert parse_version("1.2.3") == (1, 2, 3)
+        assert parse_version("1.2.3") == ((1, 2, 3), "")
 
     def test_parse_version_with_leading_zeros(self):
-        assert parse_version("v0.0.1") == (0, 0, 1)
+        assert parse_version("v0.0.1") == ((0, 0, 1), "")
 
     def test_parse_version_large_numbers(self):
-        assert parse_version("v10.20.30") == (10, 20, 30)
+        assert parse_version("v10.20.30") == ((10, 20, 30), "")
 
     def test_parse_version_invalid_format(self):
         with pytest.raises(ValueError):
@@ -109,6 +105,12 @@ class TestVersionParsing:
     def test_parse_version_missing_components(self):
         with pytest.raises(ValueError):
             parse_version("v1.2")
+
+    def test_parse_version_keeps_suffixes(self):
+        assert parse_version("v3.0.0-rc.1\n") == ((3, 0, 0), "-rc.1")
+        for tag in ["v1.2.3.4", "v01.2.3", "v1.2.3-", "v2.0.0-rc1", "v2.0.0-beta.1", "v2.0.0+build.5"]:
+            with pytest.raises(ValueError):
+                parse_version(tag)
 
     def test_bump_major(self):
         assert bump_version((1, 2, 3), "major") == (2, 0, 0)
@@ -703,6 +705,42 @@ class TestEdgeCases:
                 verbose=False,
                 push=False,
             )
+
+    def test_bump_graduates_release_candidate(self, temp_git_repo):
+        """A hand-set `-rc.N` in the version file names the release, whatever the commit verbs say."""
+        (temp_git_repo / "VERSION").write_text("2.0.0-rc.1\n")
+        (temp_git_repo / "Cargo.toml").write_text('[package]\nversion = "2.0.0-rc.1"\n')
+        subprocess.run(["git", "add", "-A"], cwd=temp_git_repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "fix: bug"], cwd=temp_git_repo, check=True, capture_output=True)
+        subprocess.run(["git", "tag", "v2.0.0-rc.1"], cwd=temp_git_repo, check=True, capture_output=True)
+        (temp_git_repo / "untracked.log").write_text("noise")
+
+        new_version = bump(
+            path=temp_git_repo,
+            version_file=temp_git_repo / "VERSION",
+            update_version_in=[(temp_git_repo / "Cargo.toml", r'^version = "(\d+\.\d+\.\d+)"')],
+            push=False,
+        )
+
+        assert new_version == (2, 0, 0)
+        assert (temp_git_repo / "VERSION").read_text().strip() == "2.0.0"
+        assert 'version = "2.0.0"\n' in (temp_git_repo / "Cargo.toml").read_text()
+        tracked = subprocess.run(["git", "ls-files"], cwd=temp_git_repo, capture_output=True, text=True, check=True).stdout
+        assert "untracked.log" not in tracked
+
+    def test_bump_graduates_release_candidate_without_tags(self, temp_git_repo):
+        subprocess.run(["git", "tag", "-d", "v0.1.0"], cwd=temp_git_repo, check=True, capture_output=True)
+        (temp_git_repo / "VERSION").write_text("1.0.0-rc.1\n")
+        subprocess.run(["git", "commit", "-am", "fix: bug"], cwd=temp_git_repo, check=True, capture_output=True)
+
+        assert bump(path=temp_git_repo, dry_run=True, version_file=temp_git_repo / "VERSION") == (1, 0, 0)
+
+    def test_bump_refuses_stale_release_candidate(self, temp_git_repo):
+        (temp_git_repo / "VERSION").write_text("0.1.0-rc.1\n")
+        subprocess.run(["git", "commit", "-am", "fix: bug"], cwd=temp_git_repo, check=True, capture_output=True)
+
+        with pytest.raises(AssertionError, match="isn't above the last tag"):
+            bump(path=temp_git_repo, dry_run=True, version_file=temp_git_repo / "VERSION")
 
 
 # endregion Edge Case Tests

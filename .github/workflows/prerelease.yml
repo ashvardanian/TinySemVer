@@ -17,7 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Install Dependencies
-        run: pip install -r requirements.txt pytest
+        run: pip install -r requirements.txt pytest mypy
+      - name: Check Types
+        run: mypy --strict tinysemver
       - name: Run PyTest
         run: pytest test.py -v
 
@@ -39,5 +41,7 @@ jobs:
           verbose: "true"
           changelog-file: "CHANGELOG.md"
           version-file: "VERSION"
-          update-version-in: 'pyproject.toml:version = "(.*)"'
+          update-version-in: |
+            pyproject.toml:version = "(.*)"
+            tinysemver/__init__.py:__version__ = "(.*)"
           dry-run: "true"
