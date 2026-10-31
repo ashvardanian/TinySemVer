@@ -296,3 +296,9 @@
 ### Minor
 
 - Add: Release candidates through a hand-set `X.Y.Z-rc.N` version (dff5da5)
+
+## October 31, 2026: v3.1.1
+
+### Patch
+
+- Docs: Deprecate TinySemVer in favour of hand-minted releases (66ae086)
