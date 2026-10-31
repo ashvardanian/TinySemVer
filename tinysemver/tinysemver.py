@@ -3,7 +3,7 @@
 
 This module traces the commit history of a Git repository after the last tag, and based 
 on the commit messages, it determines the type of version bump (major, minor, or patch).
-On "dry-runs" it simply reports the new version number, but on actual runs, it creates a
+On "dry-runs" it simply reports the new version number, but on actual runs, it creates
 a new tag, and optionally pushes it to the repository, also updating the "version file",
 the "changelog file", and all other files and RegEx patterns passed as CLI arguments.
 
@@ -14,7 +14,6 @@ Example:
         --minor-verbs 'feature,minor,add,new' \
         --patch-verbs 'fix,patch,bug,improve,docs,make' \
         --changelog-file 'CHANGELOG.md' \
-        --guide-file 'CONTRIBUTING.md' \
         --version-file 'VERSION' \
         --update-version-in 'package.json' '"version": "(.*)"' \
         --update-version-in 'CITATION.cff' '^version: (.*)' \
@@ -32,7 +31,6 @@ By default, the following conventions are used:
     - The repository must be a Git repository.
     - It must contain a "VERSION" and "CHANGELOG.md" files in the root directory.
     - The changelog is append-only - sorted in chronological order.
-    - The contibution guide is in the "CONTRIBUTING.md" file.
 
 Setting up a new project:
 

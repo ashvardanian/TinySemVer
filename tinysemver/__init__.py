@@ -1,8 +1,4 @@
-"""TinySemVer - A tiny but mighty Semantic Versioning tool.
-
-This package provides automated semantic versioning for Git repositories
-following Conventional Commits. It can generate changelogs and release notes
-with or without LLM assistance.
+"""TinySemVer turns Conventional Commits into Semantic Versioning releases.
 
 Example:
     >>> from tinysemver import bump

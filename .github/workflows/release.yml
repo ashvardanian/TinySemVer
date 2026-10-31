@@ -1,78 +1,28 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: Run Tests
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install Dependencies
         run: pip install -r requirements.txt pytest
       - name: Run PyTest
         run: pytest test.py -v
 
-  semver:
-    runs-on: ubuntu-latest
-    name: Update Version
-    needs: test
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Install Dependencies
-        run: pip install -r requirements.txt
-      - name: Run TinySemVer
-        uses: ./ # This uses the action defined in the current repository
-        with:
-          verbose: "true"
-          push: "true"
-          changelog-file: "CHANGELOG.md"
-          version-file: "VERSION"
-          update-version-in: |
-            pyproject.toml:version = "(.*)"
-            tinysemver/__init__.py:__version__ = "(.*)"
-          github-token: ${{ secrets.TINYSEMVER_TOKEN }}
-          create-release: "true"
-          push-moving-tags: "true"
-
-  rebase:
-    name: Rebase Dev. Branch
-    needs: semver
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout the latest code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Perform rebase
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout main-dev
-          git rebase origin/main
-      - name: Push changes
-        uses: CasperWA/push-protected@v2
-        with:
-          token: ${{ secrets.TINYSEMVER_TOKEN }}
-          branch: main-dev
-          unprotect_reviews: False
-          force: True
-
   publish_python:
     name: Publish Python
-    runs-on: ubuntu-latest
-    needs: semver
+    runs-on: ubuntu-26.04
+    needs: test
     environment:
       name: pypi
       url: https://pypi.org/p/tinysemver
@@ -81,11 +31,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: "main"
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
       - name: Install dependencies

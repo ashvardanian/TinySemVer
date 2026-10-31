@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tinysemver"
 version = "3.1.0"
-description = "Semantic-Versioning... that doesn't need 300,000 lines of JS"
+description = "Deprecated: Semantic Versioning from Conventional Commits in one Python file"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [

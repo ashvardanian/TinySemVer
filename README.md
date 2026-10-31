@@ -2,221 +2,108 @@
 
 ![TinySemVer Banner](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/TinySemVer.jpg)
 
-__TinySemVer__ is a minimalistic [Semantic Versioning](https://semver.org/) package for projects following [Conventional Commits](https://www.conventionalcommits.org/) in a single short Python file.
-In plain English, if your commit messages look like `feat: add new feature` or `fix: bugfix`, this package will automate releasing new "GIT tags" based on the commit messages.
-Here is how to integrate it into your project CI:
+> [!WARNING]
+> TinySemVer is deprecated and archived.
+> Automated versioning needs a CI credential that can push past branch protection, which in practice means long-lived tokens readable by every workflow and third-party Action in every repository.
+> That attack surface grows far faster than the value of automatic version bumps.
+> Bump versions by hand in a `Release: vX.Y.Z` commit, publish with `gh release create`, and let CI publish on `release: published` through trusted publishing.
+
+__TinySemVer__ turns [Conventional Commits](https://www.conventionalcommits.org/) into [Semantic Versioning](https://semver.org/) releases from a single short Python file.
+It reads the commits since the last tag, picks the next version, patches it into every file you name, extends the changelog, commits, tags and optionally publishes a GitHub release.
 
 ```sh
-$ pip install tinysemver
-$ tinysemver --dry-run --verbose
+$ uvx tinysemver --dry-run --verbose
 > Current version: 1.2.2
 > Next version: 1.3.0
 ```
 
-Or run it straight from PyPI without installing anything, which is ideal for a local dry-run:
+`uvx` runs it straight from PyPI, while `pip install tinysemver` or `uv tool install tinysemver` keep it installed.
+A dry run changes nothing, so it's safe anywhere.
 
-```sh
-$ uvx tinysemver --dry-run --verbose      # one-off, nothing installed
-$ uv tool install tinysemver              # or keep it on your PATH, like pipx
-```
+## Commit Verbs
 
-The `--dry-run` flag will only print the next version without changing any files.
-Great for pre-release CI pipelines.
+The first word of each commit title decides the bump, in any case, followed by a colon or a space:
 
-## Usage Details for the Command Line Interface
+- Major: `breaking`, `break`, `major`.
+- Minor: `feature`, `feat`, `minor`, `add`, `new`.
+- Patch: `fix`, `patch`, `bug`, `improve`, `docs`, `make`.
 
-If you need more control over the default specification, here are more options you can run against the files in this repository:
+A commit matching none of them stops the release, and merge commits are skipped.
+Replace any list with `--major-verbs`, `--minor-verbs` or `--patch-verbs`.
 
-```sh
-# This won't push
-$ tinysemver --verbose \
-    --major-verbs 'breaking,break,major' \
-    --minor-verbs 'feature,minor,add,new' \
-    --patch-verbs 'fix,patch,bug,improve,docs,make' \
-    --changelog-file 'CHANGELOG.md' \
-    --version-file 'VERSION' \
-    --update-version-in 'pyproject.toml' '^version = "(\d+\.\d+\.\d+)"' \
-    --github-repository 'ashvardanian/tinysemver'
-# Revert to the previous commit
-$ git reset --soft HEAD~1                         
-```
+## Command Line
 
-It's recommended to use strict version matching with `\d+\.\d+\.\d+` instead of a generic wildcard like `.*`, but both would work.
-Here is an example of passing even more parameters for a project like `stringzilla`:
+Each file that embeds the version takes a path and a regular expression with exactly one capturing group, which receives the new version:
 
 ```sh
 $ tinysemver --verbose \
-    --major-verbs 'breaking,break,major' \
-    --minor-verbs 'feature,minor,add,new' \
-    --patch-verbs 'fix,patch,bug,improve,docs,make' \
     --changelog-file 'CHANGELOG.md' \
     --version-file 'VERSION' \
     --update-version-in 'pyproject.toml' '^version = "(\d+\.\d+\.\d+)"' \
-    --update-version-in 'package.json' '"version": "(.*)"' \
-    --update-version-in 'CITATION.cff' '^version: (.*)' \
-    --update-major-version-in 'include/stringzilla/stringzilla.h' '^#define STRINGZILLA_VERSION_MAJOR (.*)' \
-    --update-minor-version-in 'include/stringzilla/stringzilla.h' '^#define STRINGZILLA_VERSION_MINOR (.*)' \
-    --update-patch-version-in 'include/stringzilla/stringzilla.h' '^#define STRINGZILLA_VERSION_PATCH (.*)' \
-    --github-repository 'ashvardanian/stringzilla' \
+    --update-version-in 'package.json' '"version": "(\d+\.\d+\.\d+)"' \
+    --update-major-version-in 'include/project.h' '^#define PROJECT_VERSION_MAJOR (\d+)' \
+    --update-minor-version-in 'include/project.h' '^#define PROJECT_VERSION_MINOR (\d+)' \
+    --update-patch-version-in 'include/project.h' '^#define PROJECT_VERSION_PATCH (\d+)' \
+    --github-repository 'owner/project' \
     --push
-> Current version: 1.2.2
-> ? Commits since last tag: 3                   # Only in verbose mode
-> # 5579972: Improve: Log file patches          # Only in verbose mode
-> # de645ea: Improve: Grouping CHANGELOG        # Only in verbose mode
-> Next version: 1.3.0
-> Will update file: VERSION:0
-> - 1.2.2                                       # Only in verbose mode
-> + 1.3.0                                       # Only in verbose mode
-> Will update file: package.json:5
-> - "version": "1.2.2"                          # Only in verbose mode
-> + "version": "1.3.0"                          # Only in verbose mode
-> Will update file: pyproject.toml:7
-> - version = "1.2.2"                           # Only in verbose mode
-> + version = "1.3.0"                           # Only in verbose mode
-> Will update file: CITATION.cff:7
-> - version: 1.2.2                              # Only in verbose mode
-> + version: 1.3.0                              # Only in verbose mode
-> Appending to changelog file: CHANGELOG.md
-> = skipping 250 lines                          # Only in verbose mode
-> + adding 30 lines                             # Only in verbose mode
 ```
 
-Alternatively, you can just ask for `--help`:
+Prefer strict groups like `(\d+\.\d+\.\d+)` over `(.*)`.
+Without `--push`, the release commit and tag stay local, and `git reset --soft HEAD~1` undoes the commit.
+Run `tinysemver --help` for every flag.
 
-```sh
-$ tinysemver --help
-```
+## GitHub Action
 
-## Usage Details for the GitHub CI Action
-
-TinySemVer can be easily integrated into your GitHub Actions CI pipeline.
-Assuming the differences between YAML and shell notation, some arguments are passed in a different form, like `--update-version-in`.
+The [GitHub Action](https://github.com/marketplace/actions/tinysemver) takes the same settings as inputs, writing patterns as `path:regex` lines in a `|` block.
+A dry run on every pull request catches a commit title without a verb, or a pattern that stopped matching:
 
 ```yaml
-name: Release
-
-on:
-  push:
-    branches: [ main ]
-
-jobs:
-  semver:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v5
-      with:
-        persist-credentials: false # Only if main branch if protected
-
-    - name: Run TinySemVer
-      uses: ashvardanian/tinysemver@v3 # Automatically receives non-breaking updates
-      with:
-        major-verbs: 'breaking,break,major'
-        minor-verbs: 'feature,minor,add,new'
-        patch-verbs: 'fix,patch,bug,improve,docs,make'
-        changelog-file: 'CHANGELOG.md'
-        version-file: 'VERSION'
-        update-version-in: 'pyproject.toml:version = "(.*)"' # Use colon instead of space
-        git-user-name: 'GitHub Actions'
-        git-user-email: 'actions@github.com'
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        verbose: 'true'
-        push: 'true'
-        create-release: 'true'
-        dry-run: 'false'
-
-  publish:
-    needs: semver # Depends on the previous job
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: main # Take the most recent updated version
+- uses: actions/checkout@v7
+  with:
+    fetch-depth: 0 # TinySemVer needs the tags
+- uses: ashvardanian/tinysemver@v3
+  with:
+    dry-run: "true"
+    verbose: "true"
+    version-file: "VERSION"
+    update-version-in: |
+      pyproject.toml:^version = "(\d+\.\d+\.\d+)"
+      package.json:"version": "(\d+\.\d+\.\d+)"
 ```
 
-Every team has a different workflow, but a common pattern is to have one `release.yml` for the `main` branch and another `prerelease.yml` for the `main-dev` branch used as a staging area.
-The latter would run with `dry-run: 'true'` and `push: 'false'` to prevent pushing changes to the main repository.
-The `create-release` flag is optional and can be set to `false` if you don't want to create a new release on GitHub.
-If you need to update the version in multiple files, pass a multiline string with the `|` operator:
+Pushing from CI takes `push: "true"` and a `github-token` that bypasses your branch protection, with `persist-credentials: false` on the checkout.
+That token is the attack surface the warning above describes.
+
+## Release Candidates
+
+TinySemVer never invents pre-releases, but it honors a `-rc.N` set by hand in the version file, to let people opt into a project before its API is stable.
+While the version file holds `3.0.0-rc.1`, the next release is exactly `3.0.0`, whatever the verbs say, and its changelog lists every commit since the last final tag.
+Pre-release tags never serve as the base, and the `-rc.N` suffix is stripped from every patched file, so the usual `(\d+\.\d+\.\d+)` patterns keep matching.
+A candidate that isn't above the last final tag stops the release, and other pre-release or build suffixes are rejected.
+
+## Moving Tags
+
+With `--push-moving-tags`, or `push-moving-tags: "true"` in the Action, each `v3.1.0` release also moves the `v3` and `v3.1` aliases, the way GitHub Actions are usually pinned:
 
 ```yaml
-        update-version-in: |
-          pyproject.toml:version = "(.*)"
-          package.json:"version": "(.*)"
-          CITATION.cff:version: "(.*)"
+uses: ashvardanian/tinysemver@v3       # non-breaking updates
+uses: ashvardanian/tinysemver@v3.1     # patch updates
+uses: ashvardanian/tinysemver@v3.1.0   # never changes
 ```
 
-### Release Candidates
+Moving a tag is a force-push, so it needs permission to bypass tag protection.
+If an alias can't be pushed, TinySemVer warns and moves on, because the release itself is already published.
 
-TinySemVer never invents pre-release versions, but it respects a `-rc.N` one set by hand to let people opt into a project before its API is stable.
-Other pre-release and build suffixes are rejected.
-While the version file holds something like `3.0.0-rc.1`, the next release is exactly `3.0.0`, whatever the commit verbs say, and the changelog lists every commit since the last final tag.
-Pre-release tags are never used as the base, and the `-rc.1` suffix is stripped from every `update-version-in` file, so the usual `(\d+\.\d+\.\d+)` patterns keep working.
-A release candidate that isn't above the last final tag stops the release.
+## Why Another Tool
 
-For examples, consider checking StringZilla, USearch, and other libraries using TinySemVer.
-
-Since version 3.0.0, TinySemVer can optionally maintain moving version tags similar to `actions/checkout@v4`:
-
-```yaml
-uses: ashvardanian/tinysemver@v3       # Automatically gets non-breaking updates
-uses: ashvardanian/tinysemver@v3.0     # Automatically gets patch updates
-uses: ashvardanian/tinysemver@v3.0.0   # Pinned, never changes
-uses: ashvardanian/tinysemver@main     # Bleeding edge
-```
-
-This feature is disabled by default because it requires force-push permissions.
-To enable it, add `push-moving-tags: 'true'` and ensure your token has force-push access:
-
-```yaml
-    - name: Run TinySemVer
-      uses: ashvardanian/tinysemver@v3
-      with:
-        push: 'true'
-        push-moving-tags: 'true'
-        github-token: ${{ secrets.TINYSEMVER_TOKEN }}
-```
-
-When enabled, TinySemVer creates three tags: `v3` (major), `v3.0` (minor), and `v3.0.0` (specific).
-The default `GITHUB_TOKEN` typically lacks force-push permissions for protected branches.
-If a moving tag can't be pushed, TinySemVer prints a warning and keeps going — by that point the version commit and the exact tag are already published, so the aliases must never abort a completed release.
-
-### Security Considerations
-
-If your default branch is protected with a "pull request before merging" rule:
-
-1. A repository-scoped Personal Access Token (PAT) is required to push to the branch.
-2. Set `persist-credentials: false` in the `actions/checkout` step.
-
-Also keep in mind:
-
-- The default `GITHUB_TOKEN` cannot be used with protected branches.
-- Using a PAT instead of `GITHUB_TOKEN` poses security risks:
-  - Workflows from any branch can access secret variables.
-  - This could allow non-protected branches to use elevated permissions.
-- Mitigation:
-  - Use a fine-grained PAT with minimal necessary permissions.
-  - Prefer the `pull_request` workflow trigger, which limits permissions.
-  - Be cautious: users with write access could still potentially exploit workflows to expose the PAT.
-
-> [!TIP]
-> Always follow the principle of least privilege when setting up tokens and permissions.
-
-For more information on CI configurations and pushing changes in GitHub Actions, see the [semantic-release GitHub Actions guide](https://github.com/semantic-release/semantic-release/blob/master/docs/recipes/ci-configurations/github-actions.md#pushing-packagejson-changes-to-a-master-branch).
-
-## Why Create Another SemVer Tool?
-
-In the past I was using [semantic-release](https://github.com/semantic-release/semantic-release) for my 10+ projects.
-At some point, a breaking change in the dependencies broke all my projects CI pipelines for a month, affecting dozens of tech companies using those libraries.
-I felt miserable trying to trace the issue and reluctant to go through __363K lines of low-quality JavaScript code__ to find the bug.
-Yes, it's 363K lines of code:
+I used to release my 10+ projects with [semantic-release](https://github.com/semantic-release/semantic-release).
+Then a breaking change deep in its dependencies broke all of their CI pipelines for a month, affecting dozens of companies using those libraries.
+Tracing it meant wading through __363K lines of JavaScript__:
 
 ```sh
 $ .../node_modules$ cloc .
    10751 text files.
-    7809 unique files.                                          
+    7809 unique files.
     3498 files ignored.
 
 github.com/AlDanial/cloc v 1.90  T=2.96 s (2450.6 files/s, 300331.1 lines/s)
@@ -231,85 +118,33 @@ SUM:                           7256          90782         164390         634071
 --------------------------------------------------------------------------------
 ```
 
-Here is the `cloc` output for `tinysemver`:
+TinySemVer is one Python file with about 600 lines of code, and `rich` for colored output as its only dependency.
 
-```sh
-$ tinysemver$ cloc .
-      17 text files.
-      13 unique files.                              
-       6 files ignored.
+## What's Missing
 
-github.com/AlDanial/cloc v 1.96  T=0.01 s (660.7 files/s, 44267.6 lines/s)
--------------------------------------------------------------------------------
-Language                     files          blank        comment           code
--------------------------------------------------------------------------------
-Python                           1             79             93            493
-...                            ...            ...            ...            ...
--------------------------------------------------------------------------------
-SUM:                            13            227            107           1124
--------------------------------------------------------------------------------
-```
-
-## What's Missing?
-
-- Optional commit scopes, like `feat(scope): add new feature`. Doesn't make sense for most projects.
+- Commit scopes, like `feat(scope): add new feature`, which make little sense for most projects.
 - GenAI.
 
-> For reference, according to SemVer 2.0, all [following versions](https://regex101.com/r/Ly7O1x/3/) are valid: `1.1.2-prerelease+meta`, `1.1.2+meta`, `1.1.2+meta-valid`, `1.0.0-alpha`, `1.0.0-beta`, `1.0.0-alpha.beta.1`, `1.0.0-alpha.1`, `1.0.0-alpha0.valid`, `1.0.0-alpha.0valid`, `1.0.0-alpha-a.b-c-somethinglong+build.1-aef.1-its-okay`, `1.0.0-rc.1+build.1`, `2.0.0-rc.1+build.123`, `1.2.3-beta`, `10.2.3-DEV-SNAPSHOT`, `1.2.3-SNAPSHOT-123`, `2.0.0+build.1848`, `2.0.1-alpha.1227`, `1.0.0-alpha+beta`, `1.2.3----RC-SNAPSHOT.12.9.1--.12+788`, `1.2.3----R-S.12.9.1--.12+meta`, `1.2.3----RC-SNAPSHOT.12.9.1--.12`, `1.0.0+0.build.1-rc.10000aaa-kk-0.1`, `1.0.0-0A.is.legal`.
+TinySemVer accepts only `MAJOR.MINOR.PATCH` and a hand-set `-rc.N`, while SemVer 2.0 allows [many more forms](https://regex101.com/r/Ly7O1x/3/), like `1.0.0-alpha.beta.1` or `2.0.0+build.1848`.
 
-## Examples
+## Real-World Example
 
-Assembling RegEx queries can be hard.
-Luckily, there aren't too many files to update in most projects.
-Below is an example of a pipeline for the [USearch](https://github.com/unum-cloud/usearch) project, that has bindings to 10 programming languages.
-Feel free to add other sources and examples.
+[USearch](https://github.com/unum-cloud/usearch) has bindings to 10 programming languages, and its version lives in a dozen files:
 
 ```sh
-$ mkdir -p example
-
-$ wget https://github.com/unum-cloud/usearch/raw/main/VERSION -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/CHANGELOG.md -P example/ # Missing
-$ wget https://github.com/unum-cloud/usearch/raw/main/CITATION.cff -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/CMakeLists.txt -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/Cargo.toml -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/package.json -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/conanfile.py -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/README.md -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/wasmer.toml -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/csharp/nuget/nuget-package.props -P example/
-$ wget https://github.com/unum-cloud/usearch/raw/main/include/usearch/index.hpp -P example/
-
-# You can match the semantic version part with a generic wildcard like: .*
-# But it's recommended to stick to a stricter format: \d+\.\d+\.\d+
 $ tinysemver --dry-run --verbose \
-    --major-verbs 'breaking,break,major' \
-    --minor-verbs 'feature,minor,add,new' \
-    --patch-verbs 'fix,patch,bug,improve,docs,make' \
-    --version-file 'example/VERSION' \
-    --changelog-file 'example/CHANGELOG.md' \
-    --update-version-in 'example/CITATION.cff' '^version: (\d+\.\d+\.\d+)' \
-    --update-version-in 'example/CMakeLists.txt' '\sVERSION (\d+\.\d+\.\d+)' \
-    --update-version-in 'example/Cargo.toml' '^version = "(\d+\.\d+\.\d+)"' \
-    --update-version-in 'example/package.json' '"version": "(\d+\.\d+\.\d+)"' \
-    --update-version-in 'example/conanfile.py' '\sversion = "(\d+\.\d+\.\d+)"' \
-    --update-version-in 'example/README.md' '^version = \{(\d+\.\d+\.\d+)\}' \
-    --update-version-in 'example/wasmer.toml' '^version = "(\d+\.\d+\.\d+)"' \
-    --update-version-in 'example/nuget-package.props' '(\d+\.\d+\.\d+)\<\/Version\>' \
-    --update-major-version-in 'example/index.hpp' '^#define USEARCH_VERSION_MAJOR (\d+)' \
-    --update-minor-version-in 'example/index.hpp' '^#define USEARCH_VERSION_MINOR (\d+)' \
-    --update-patch-version-in 'example/index.hpp' '^#define USEARCH_VERSION_PATCH (\d+)' \
-    --path .
-```
-
-## Contributing
-
-Feel free to open an issue or a pull request.
-If you need to bump the version of `tinysemver` itself:
-
-```sh
-tinysemver --verbose \
     --version-file 'VERSION' \
-    --changelog-file 'CHANGELOG.md' \
-    --update-version-in 'pyproject.toml' 'version = "(.*)"' \
-    --github-repository 'ashvardanian/tinysemver' --push
+    --update-version-in 'package.json' '"version": "(\d+\.\d+\.\d+)"' \
+    --update-version-in 'CITATION.cff' '^version: (\d+\.\d+\.\d+)' \
+    --update-version-in 'Cargo.toml' '^version = "(\d+\.\d+\.\d+)"' \
+    --update-version-in 'wasmer.toml' '^version = "(\d+\.\d+\.\d+)"' \
+    --update-version-in 'conanfile.py' 'version = "(\d+\.\d+\.\d+)"' \
+    --update-version-in 'java/README.md' "usearchVersion = '(\d+\.\d+\.\d+)'" \
+    --update-version-in 'java/README.md' "version: '(\d+\.\d+\.\d+)'" \
+    --update-version-in 'README.md' 'version = {(\d+\.\d+\.\d+)}' \
+    --update-version-in 'csharp/nuget/nuget-package.props' '>(\d+\.\d+\.\d+)</Version>' \
+    --update-version-in 'CMakeLists.txt' 'VERSION (\d+\.\d+\.\d+)' \
+    --update-major-version-in 'include/usearch/index.hpp' '^#define USEARCH_VERSION_MAJOR (\d+)' \
+    --update-minor-version-in 'include/usearch/index.hpp' '^#define USEARCH_VERSION_MINOR (\d+)' \
+    --update-patch-version-in 'include/usearch/index.hpp' '^#define USEARCH_VERSION_PATCH (\d+)'
 ```
